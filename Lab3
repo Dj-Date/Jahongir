@@ -1,0 +1,170 @@
+import matplotlib.pyplot as plt
+import numpy as np
+
+# ЦВС
+class Dds():
+    def __init__ (self, phase_acc_width, freq_word_width, phase_out_width, amp_out_width):
+        self.phase_acc_width = phase_acc_width
+        self.freq_word_width = freq_word_width
+        self.phase_out_width = phase_out_width
+        self.amp_out_width = amp_out_width
+        self.phase_arr = []
+        self.phase_acc_arr = []
+        self.y_sin = []
+        
+    def set_params (self, phase_offset, amp_offset, amp, per):
+        self.phase_offset = phase_offset
+        self.amp_offset = amp_offset
+        self.amp = amp
+        self.per = per
+        self.incr = int(self.freq_word_width * 2 ** self.phase_acc_width) + 1
+    
+    def phase(self):
+        phase = self.phase_offset
+        
+        for i in range(0, int(2 ** self.phase_acc_width * self.per), self.incr):
+            self.phase_arr.append(phase)
+            phase = phase + self.incr
+            
+        plt.subplot(4, 2, 1)
+        plt.plot(np.arange(0, len(self.phase_arr)), self.phase_arr)
+
+        plt.title("Фаза")
+    
+    # Аккумулятор фазы
+    def accumulator_phase(self):
+        phase = self.phase_offset
+        
+        for i in range(0, int(2 ** self.phase_acc_width * self.per), self.incr):
+            phase = phase + self.incr
+            phase = phase % 2 ** self.phase_acc_width
+            self.phase_acc_arr.append(int(phase) >> self.phase_acc_width - self.phase_out_width)
+            
+        plt.subplot(4,2,2)
+        plt.plot(np.arange(0, 2 ** self.phase_acc_width * self.per, self.incr), self.phase_acc_arr)
+        plt.title("Aккумулятор фазы")
+
+    
+    #Генератор синусоидального сигнала, выход ЦАП
+    def generate_sin (self):
+        for i in range(0,len(self.phase_acc_arr)):
+            self.y_sin.append(self.amp_offset + self.amp * np.sin( 2 * np.pi * self.phase_arr[i] /2 ** self.phase_acc_width))
+
+        plt.subplot(4,2,3)
+        plt.plot(np.arange(0, len(self.y_sin)), self.y_sin)
+        plt.title("Выход ЦАП")
+        
+        return self.y_sin
+    
+# Модулятор сигнала    
+def encoder(sin_amp, sin_freq, sin_amp_offset, sin_phase_offset, code = '1011100001000111011110', code_level_len = 240, period = 22): 
+    bit_sequence = np.array(list(code), dtype=int)
+    
+    dds = Dds(phase_acc_width, freq_word_width, phase_out_width, amp_out_width)
+    dds.set_params(sin_phase_offset, sin_amp_offset, A, period)
+    ph = dds.phase()
+    gen_phase = dds.accumulator_phase()
+    sin = dds.generate_sin()
+     
+    wide_seq = np.repeat(bit_sequence, code_level_len)
+    encoded_sin = wide_seq * sin
+
+    plt.subplot(4, 2, 4)
+    plt.plot(np.arange(0, level_len * len(bit_sequence)), encoded_sin)
+    plt.title("Выход модулятора сигнала")
+    
+    return encoded_sin 
+    
+def round_custom(num, step):
+    return round(num / step) * step
+    
+def decoder(encoded_sin, code_level_len, A):
+    # Выпрямитель
+    rectifier_sig = abs(encoded_sin)
+    plt.subplot(4, 2, 5)
+    plt.plot(np.arange(0, len(rectifier_sig)), rectifier_sig)
+    plt.title("Выход выпрямителя")
+
+    # ФНЧ
+    lpf_sig = rectifier_sig + 0.4 * A
+    lpf_sig[0] = 0
+    lpf_sig[len(lpf_sig) - 1] = 0
+    for i in range(1, len(lpf_sig) - 1):
+        if (lpf_sig[i - 1] > 0.5 * A and lpf_sig[i + 1] > 0.5 * A):
+            lpf_sig[i] = A
+        elif (lpf_sig[i] > 0.5 * A):
+            lpf_sig[i] = A
+    
+    plt.subplot(4, 2, 6)
+    plt.plot(np.arange(0, len(lpf_sig)), lpf_sig)
+    plt.title("Выход ФНЧ")
+
+    # Компаратор
+    comp_sig = lpf_sig
+    for i in range(len(comp_sig)):
+        if (lpf_sig[i] < 0.5 * A):
+            comp_sig[i] = 0
+        if (lpf_sig[i] > 0.5 * A):
+            comp_sig[i] = A
+    
+    plt.subplot(4, 2, 7)
+    plt.plot(np.arange(0, len(comp_sig)), comp_sig)
+    plt.title("Выход компаратора")
+    
+    plt.subplot(4, 2, 8)
+    plt.plot(np.arange(0, len(encoded_sin)), encoded_sin)
+    plt.plot(np.arange(0, len(comp_sig)), comp_sig)
+    plt.title("Наложение цифрового сигнала на модулированный")
+    
+    code = ''
+    for i in range(1, len(comp_sig), code_level_len):
+        code = code + str(int(comp_sig[i]))
+    print("Выходная последовательность демодулятора: " + str(code))
+    return code
+
+if __name__ == "__main__":
+    # Аккумулятор фазы
+    phase_acc_width = 36
+
+    # Частотное слово
+    freq_word_width = 0.03
+
+    # Выход фазы
+    phase_out_width = 16
+
+    # Выход амлитуды, бит
+    amp_out_width = 12
+
+    # Число периодов на один бит
+    period_per_bit = 3
+
+    # Входная последовательность бит
+    bit_sequence = input("Введите входную последовательность из 0 и 1: ")
+    if(len(bit_sequence) == 0):
+        bit_sequence = '101010101'
+
+    # Оффсет фазы
+    Off_ph = 0
+
+    # Оффсет амлитуды
+    Off_a = 0
+
+    # Амплитуда
+    A = 1
+
+    # Период
+    per = period_per_bit * len(bit_sequence)
+
+    level_len = int(period_per_bit / freq_word_width)
+
+    fig = plt.figure()
+    fig.set_figwidth(10)
+    fig.set_figheight(6)
+
+    en = encoder(A, freq_word_width, Off_a, Off_ph, bit_sequence, level_len, per)
+
+    dec = decoder(en, level_len, A)
+        
+    plt.subplots_adjust(hspace = 0.95)    
+    fig.savefig("signals.png", dpi = 300, bbox_inches='tight')
+    plt.show()
